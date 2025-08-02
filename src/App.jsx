@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Container, Row, Col, Alert, Button, Form, Modal, Spinner } from 'react-bootstrap';
 import 'bootstrap/dist/css/bootstrap.min.css';
+//import spamFilter from './utils/spamFilter.json';
 import { ethers } from "ethers";
 
 // Import ThemeProvider
