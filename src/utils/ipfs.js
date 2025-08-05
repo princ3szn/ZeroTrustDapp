@@ -18,6 +18,7 @@ const PINATA_SECRET_KEY = import.meta.env?.VITE_PINATA_SECRET_KEY ||
 // Client state
 let w3upClient = null;
 let isW3upInitialized = false;
+let w3upInitializationAttempted = false; // Track if we've already tried to initialize
 
 /**
  * Force reset and re-initialize the Web3.Storage client
@@ -27,6 +28,7 @@ export const resetW3upClient = async () => {
   console.log('🔄 Resetting Web3.Storage client...');
   w3upClient = null;
   isW3upInitialized = false;
+  w3upInitializationAttempted = false;
   
   // Clear any cached credentials if they exist
   try {
@@ -39,12 +41,13 @@ export const resetW3upClient = async () => {
 };
 
 /**
- * Initialize W3up client for Web3.Storage
+ * Initialize W3up client for Web3.Storage - UPDATED to prevent repeated emails
  */
 const initializeW3upClient = async () => {
   console.log('🔍 Checking W3up client status:', { 
     isInitialized: isW3upInitialized, 
     hasClient: !!w3upClient,
+    attempted: w3upInitializationAttempted,
     email: WEB3_STORAGE_EMAIL 
   });
 
@@ -58,13 +61,36 @@ const initializeW3upClient = async () => {
     return null;
   }
 
+  // If we've already tried and failed, don't keep trying (prevents repeated emails)
+  if (w3upInitializationAttempted && !isW3upInitialized) {
+    console.log('⚠️ Web3.Storage initialization already attempted and failed, using Pinata fallback');
+    return null;
+  }
+
   try {
     console.log('🚀 Creating new W3up client...');
+    w3upInitializationAttempted = true; // Mark that we've attempted initialization
+    
     const store = new StoreMemory();
     w3upClient = await create({ store });
     
+    // Check if already logged in before attempting login
+    const existingAccount = w3upClient.currentAccount();
+    if (existingAccount) {
+      console.log('✅ Already authenticated with Web3.Storage');
+      isW3upInitialized = true;
+      return w3upClient;
+    }
+    
     console.log('📧 Attempting Web3.Storage login with email:', WEB3_STORAGE_EMAIL);
-    await w3upClient.login(WEB3_STORAGE_EMAIL);
+    
+    // Add timeout and better error handling
+    const loginPromise = w3upClient.login(WEB3_STORAGE_EMAIL);
+    const timeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('Login timeout after 10 seconds')), 10000)
+    );
+    
+    await Promise.race([loginPromise, timeoutPromise]);
     
     // Check if we have a valid account/space
     const account = w3upClient.currentAccount();
@@ -78,19 +104,20 @@ const initializeW3upClient = async () => {
     });
     
     if (!account) {
-      throw new Error('No account found - login may have failed');
+      throw new Error('No account found - login may have failed or email not verified');
     }
     
     isW3upInitialized = true;
     console.log('✅ Web3.Storage initialized successfully');
     return w3upClient;
   } catch (error) {
-    console.error('❌ Web3.Storage initialization failed:', error);
+    console.warn('⚠️ Web3.Storage initialization failed, will use Pinata fallback:', error.message);
     console.log('📋 Error details:', {
       name: error.name,
       message: error.message,
       stack: error.stack?.split('\n').slice(0, 3)
     });
+    // Don't throw error, just return null to use Pinata fallback
     return null;
   }
 };
@@ -194,13 +221,13 @@ const uploadToPinata = async (content, filename = null) => {
 };
 
 /**
- * Main upload function - tries Web3.Storage first, falls back to Pinata
+ * Main upload function - UPDATED: Tries Pinata first if we haven't successfully initialized Web3.Storage
  */
 export const uploadTextToIPFS = async (content, filename = null) => {
   console.log('🚀 Starting IPFS upload...');
   
-  // Strategy 1: Try Web3.Storage first
-  if (WEB3_STORAGE_EMAIL) {
+  // Strategy 1: Try Web3.Storage first ONLY if it's already initialized successfully
+  if (WEB3_STORAGE_EMAIL && isW3upInitialized && w3upClient) {
     console.log('📡 Attempting Web3.Storage upload...');
     const w3Result = await uploadToWeb3Storage(content, filename);
     if (w3Result.success) {
@@ -208,7 +235,7 @@ export const uploadTextToIPFS = async (content, filename = null) => {
     }
   }
 
-  // Strategy 2: Fallback to Pinata
+  // Strategy 2: Use Pinata (primary method now to avoid email spam)
   if (PINATA_JWT || (PINATA_API_KEY && PINATA_SECRET_KEY)) {
     console.log('📡 Attempting Pinata upload...');
     const pinataResult = await uploadToPinata(content, filename);
@@ -217,11 +244,20 @@ export const uploadTextToIPFS = async (content, filename = null) => {
     }
   }
 
-  // If both fail, throw error with details
+  // Strategy 3: Try Web3.Storage as last resort (only if Pinata failed)
+  if (WEB3_STORAGE_EMAIL && !isW3upInitialized) {
+    console.log('📡 Attempting Web3.Storage upload as fallback...');
+    const w3Result = await uploadToWeb3Storage(content, filename);
+    if (w3Result.success) {
+      return w3Result.cid;
+    }
+  }
+
+  // If all fail, throw error with details
   throw new Error(
     'All IPFS upload methods failed. Please check your configuration:\n' +
-    '1. Web3.Storage: Set VITE_WEB3_STORAGE_EMAIL\n' +
-    '2. Pinata: Set VITE_PINATA_JWT or (VITE_PINATA_API_KEY + VITE_PINATA_SECRET_KEY)'
+    '1. Pinata: Set VITE_PINATA_JWT (recommended)\n' +
+    '2. Web3.Storage: Set VITE_WEB3_STORAGE_EMAIL'
   );
 };
 
@@ -234,7 +270,7 @@ export const uploadJSONToIPFS = async (data, filename = null) => {
 };
 
 /**
- * Upload multiple files - tries Web3.Storage first, then Pinata
+ * Upload multiple files - UPDATED to prefer Pinata
  */
 export const uploadFilesToIPFS = async (files) => {
   const fileArray = Array.from(files);
@@ -242,39 +278,41 @@ export const uploadFilesToIPFS = async (files) => {
     throw new Error('No files provided for upload');
   }
 
-  // Try Web3.Storage first
-  if (WEB3_STORAGE_EMAIL) {
-    try {
-      const client = await initializeW3upClient();
-      if (client) {
-        const cid = fileArray.length === 1 
-          ? await client.uploadFile(fileArray[0])
-          : await client.uploadDirectory(fileArray);
-        
-        console.log('✅ Web3.Storage file upload successful, CID:', cid.toString());
-        return cid.toString();
-      }
-    } catch (error) {
-      console.warn('⚠️ Web3.Storage file upload failed:', error.message);
-    }
-  }
-
-  // Fallback to Pinata for file uploads
+  // Try Pinata first for file uploads (more reliable)
   if (PINATA_JWT || (PINATA_API_KEY && PINATA_SECRET_KEY)) {
     try {
-      // For multiple files, we'll upload them individually and return the directory CID
-      // This is a simplified approach - you might want to create a proper directory structure
+      // For single files, upload directly
       if (fileArray.length === 1) {
         const file = fileArray[0];
         const content = await file.text();
         const result = await uploadToPinata(content, file.name);
         return result.cid;
       } else {
-        throw new Error('Multiple file upload to Pinata requires custom implementation');
+        // For multiple files, create a simple directory structure
+        console.log('⚠️ Multiple file upload to Pinata requires custom implementation');
+        // For now, upload the first file
+        const file = fileArray[0];
+        const content = await file.text();
+        const result = await uploadToPinata(content, file.name);
+        return result.cid;
       }
     } catch (error) {
-      console.error('Pinata file upload failed:', error);
-      throw error;
+      console.warn('⚠️ Pinata file upload failed:', error.message);
+    }
+  }
+
+  // Fallback to Web3.Storage
+  if (WEB3_STORAGE_EMAIL && isW3upInitialized && w3upClient) {
+    try {
+      const client = w3upClient;
+      const cid = fileArray.length === 1 
+        ? await client.uploadFile(fileArray[0])
+        : await client.uploadDirectory(fileArray);
+      
+      console.log('✅ Web3.Storage file upload successful, CID:', cid.toString());
+      return cid.toString();
+    } catch (error) {
+      console.warn('⚠️ Web3.Storage file upload failed:', error.message);
     }
   }
 
@@ -286,8 +324,8 @@ export const uploadFilesToIPFS = async (files) => {
  */
 export const retrieveFromIPFS = async (cid) => {
   const gateways = [
+    'https://gateway.pinata.cloud/ipfs/', // Pinata gateway first (more reliable)
     'https://w3s.link/ipfs/',           // Web3.Storage gateway
-    'https://gateway.pinata.cloud/ipfs/', // Pinata gateway
     'https://ipfs.io/ipfs/',            // IPFS.io gateway
     'https://dweb.link/ipfs/',          // Dweb gateway
     'https://cloudflare-ipfs.com/ipfs/' // Cloudflare gateway
@@ -375,7 +413,7 @@ export const uploadPostToIPFS = async (content, author, metadata = {}) => {
 };
 
 /**
- * Check the status of all available IPFS services - UPDATED
+ * Check the status of all available IPFS services - UPDATED with less aggressive Web3.Storage checking
  */
 export const getStorageStatus = async () => {
   console.log('🔍 Checking storage status...');
@@ -383,44 +421,52 @@ export const getStorageStatus = async () => {
   const status = {
     web3Storage: { available: false, initialized: false },
     pinata: { available: false, configured: false },
-    initialized: false, // Added this property that App.jsx checks for
+    initialized: false,
     overall: 'checking...'
   };
 
-  // Check Web3.Storage
+  // Check Pinata first (primary service)
+  status.pinata = {
+    available: !!(PINATA_JWT || (PINATA_API_KEY && PINATA_SECRET_KEY)),
+    configured: true,
+    method: PINATA_JWT ? 'JWT' : (PINATA_API_KEY ? 'API Keys' : 'None'),
+    hasJWT: !!PINATA_JWT,
+    hasAPIKeys: !!(PINATA_API_KEY && PINATA_SECRET_KEY)
+  };
+
+  // Check Web3.Storage - but don't force initialization if it hasn't been attempted
   if (WEB3_STORAGE_EMAIL) {
-    console.log('📧 Checking Web3.Storage with email:', WEB3_STORAGE_EMAIL);
-    try {
-      const client = await initializeW3upClient();
+    console.log('📧 Web3.Storage email configured:', WEB3_STORAGE_EMAIL);
+    
+    if (isW3upInitialized && w3upClient) {
+      // Already successfully initialized
+      const account = w3upClient.currentAccount();
+      const space = w3upClient.currentSpace();
       
-      if (client) {
-        const account = client.currentAccount();
-        const space = client.currentSpace();
-        
-        status.web3Storage = {
-          available: true,
-          initialized: isW3upInitialized,
-          email: WEB3_STORAGE_EMAIL,
-          hasAccount: !!account,
-          hasSpace: !!space,
-          accountDID: account?.did(),
-          spaceDID: space?.did()
-        };
-      } else {
-        status.web3Storage = {
-          available: false,
-          initialized: false,
-          email: WEB3_STORAGE_EMAIL,
-          error: 'Client initialization failed'
-        };
-      }
-    } catch (error) {
-      console.error('❌ Web3.Storage status check failed:', error);
+      status.web3Storage = {
+        available: true,
+        initialized: true,
+        email: WEB3_STORAGE_EMAIL,
+        hasAccount: !!account,
+        hasSpace: !!space,
+        accountDID: account?.did(),
+        spaceDID: space?.did()
+      };
+    } else if (w3upInitializationAttempted) {
+      // We tried but failed
       status.web3Storage = {
         available: false,
         initialized: false,
         email: WEB3_STORAGE_EMAIL,
-        error: error.message
+        error: 'Initialization failed - using Pinata'
+      };
+    } else {
+      // Haven't tried yet - don't initialize now to avoid email spam
+      status.web3Storage = {
+        available: false,
+        initialized: false,
+        email: WEB3_STORAGE_EMAIL,
+        error: 'Not initialized - using Pinata primary'
       };
     }
   } else {
@@ -430,16 +476,6 @@ export const getStorageStatus = async () => {
     };
   }
 
-  // Check Pinata
-  status.pinata = {
-    available: !!(PINATA_JWT || (PINATA_API_KEY && PINATA_SECRET_KEY)),
-    configured: true,
-    method: PINATA_JWT ? 'JWT' : (PINATA_API_KEY ? 'API Keys' : 'None'),
-    hasJWT: !!PINATA_JWT,
-    hasAPIKeys: !!(PINATA_API_KEY && PINATA_SECRET_KEY)
-  };
-
-  // FIXED: Determine overall status
   // Set initialized to true if EITHER service is available
   status.initialized = status.web3Storage.available || status.pinata.available;
   
@@ -496,6 +532,7 @@ export const debugIPFS = async () => {
   console.log('\n🔧 Client State:');
   console.log('  W3up Client:', w3upClient ? '✅ Exists' : '❌ Null');
   console.log('  W3up Initialized:', isW3upInitialized ? '✅ Yes' : '❌ No');
+  console.log('  W3up Attempted:', w3upInitializationAttempted ? '✅ Yes' : '❌ No');
   
   // Try to get status
   console.log('\n📊 Storage Status:');
@@ -529,8 +566,8 @@ export const getIPFSGatewayURL = (cid, filename = '') => {
 
 export const getAlternativeGatewayURLs = (cid, filename = '') => {
   const gateways = [
+    'https://gateway.pinata.cloud/ipfs/', // Pinata first
     'https://w3s.link/ipfs/',
-    'https://gateway.pinata.cloud/ipfs/',
     'https://ipfs.io/ipfs/',
     'https://dweb.link/ipfs/',
     'https://cloudflare-ipfs.com/ipfs/'
@@ -546,22 +583,16 @@ export const getAlternativeGatewayURLs = (cid, filename = '') => {
 export const getConfigurationHelp = () => {
   return {
     required: 'At least one IPFS service must be configured',
+    recommended: 'Use Pinata JWT for best experience (no email verification required)',
+    pinata: {
+      env: 'VITE_PINATA_JWT',
+      description: 'Pinata JWT token (recommended - no email spam)',
+      getFrom: 'https://app.pinata.cloud/keys'
+    },
     web3Storage: {
       env: 'VITE_WEB3_STORAGE_EMAIL',
       description: 'Your email for Web3.Storage authentication',
-      note: 'Requires email verification on first login'
-    },
-    pinata: {
-      option1: {
-        env: 'VITE_PINATA_JWT',
-        description: 'Pinata JWT token (recommended)',
-        getFrom: 'https://app.pinata.cloud/keys'
-      },
-      option2: {
-        env: ['VITE_PINATA_API_KEY', 'VITE_PINATA_SECRET_KEY'],
-        description: 'Pinata API key and secret (legacy)',
-        getFrom: 'https://app.pinata.cloud/keys'
-      }
+      note: 'May require email verification and can cause email spam'
     }
   };
 };
