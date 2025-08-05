@@ -30,8 +30,8 @@ import {
   removeAllListeners
 } from "./utils/contract";
 
-import AppNavbar from './components/AppNavBar';
-import HeroSection from './components/Herosection';
+import AppNavbar from './components/AppNavbar';
+import HeroSection from './components/Herosetion';
 import UserProfile from './components/UserProfile';
 import PostsFeed from './components/PostsFeed';
 
