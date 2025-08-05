@@ -31,7 +31,7 @@ import {
 } from "./utils/contract";
 
 import AppNavbar from './components/AppNavbar';
-import HeroSection from './components/Herosetion';
+import HeroSection from './components/Herosection';
 import UserProfile from './components/UserProfile';
 import PostsFeed from './components/PostsFeed';
 
