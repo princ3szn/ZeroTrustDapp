@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Container, Row, Col, Button, Modal } from 'react-bootstrap';
+import logo from '../assets/logo.jpg';
 
 const HeroSection = ({ currentAccount, userInfo, connectWallet, isConnecting }) => {
   const [showLearnMore, setShowLearnMore] = useState(false);
@@ -115,7 +116,7 @@ const HeroSection = ({ currentAccount, userInfo, connectWallet, isConnecting }) 
                   border: '1px solid rgba(255,255,255,0.1)'
                 }}
               >
-                <div 
+               <div 
   className="bg-dark rounded-4" 
   style={{
     height: '300px',
@@ -126,7 +127,7 @@ const HeroSection = ({ currentAccount, userInfo, connectWallet, isConnecting }) 
   }}
 >
   <img 
-    src="/logo.jpg" 
+    src={logo} 
     alt="Blockchain Visualization" 
     style={{
   width: '100%',
