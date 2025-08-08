@@ -116,18 +116,25 @@ const HeroSection = ({ currentAccount, userInfo, connectWallet, isConnecting }) 
                 }}
               >
                 <div 
-                  className="bg-dark rounded-4" 
-                  style={{
-                    height: '300px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    color: '#6c757d'
-                  }}
-                >
-                  {/* Placeholder for blockchain/Web3 graphic */}
-                  Blockchain Visualization
-                </div>
+  className="bg-dark rounded-4" 
+  style={{
+    height: '300px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    color: '#6c757d'
+  }}
+>
+  <img 
+    src="/logo.jpg" 
+    alt="Blockchain Visualization" 
+    style={{
+  width: '100%',
+  height: '100%',
+  objectFit: 'cover'
+}}
+  />
+</div>
               </div>
             </Col>
           </Row>
