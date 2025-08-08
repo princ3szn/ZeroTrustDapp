@@ -426,9 +426,11 @@ function App() {
           )}
 
           <HeroSection 
-            currentAccount={currentAccount}
-            userInfo={userInfo}
-          />
+  currentAccount={currentAccount}
+  userInfo={userInfo}
+  connectWallet={connectWallet}  // Add this prop
+  isConnecting={isConnecting}    // Add this prop
+/>
 
           <Row>
             <Col md={4}>
